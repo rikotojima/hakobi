@@ -890,6 +890,22 @@ export default function App({ session, onLogout }) {
     fetchAll();
   }, []);
 
+  // ── Google Calendar 自動同期（5分ごと） ───────────────────────────────────
+  useEffect(() => {
+    // 初回ロード完了後に1回サイレント同期
+    if (!loading) {
+      syncCalendar(true);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    // 5分ごとに自動同期（サイレント）
+    const interval = setInterval(() => {
+      syncCalendar(true);
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // ── Supabase: 面接官スロット更新 ─────────────────────────────────────────
   const syncInterviewerSlots = async (id, slots) => {
     await supabase.from("interviewers").update({ slots }).eq("id", id);
@@ -952,7 +968,7 @@ export default function App({ session, onLogout }) {
   const notify = (msg) => setNotification(msg);
 
   // ── Google Calendar から空き枠を自動取得 ─────────────────────────────────
-  const syncCalendar = async () => {
+  const syncCalendar = async (silent = false) => {
     setCalendarLoading(true);
     try {
       // Supabaseセッションからprovider_token（GoogleのOAuthトークン）を取得
@@ -960,7 +976,7 @@ export default function App({ session, onLogout }) {
       const accessToken = session?.provider_token;
 
       if (!accessToken) {
-        notify("Googleカレンダーの権限がありません。一度ログアウトして再ログインしてください。");
+        if (!silent) notify("Googleカレンダーの権限がありません。一度ログアウトして再ログインしてください。");
         setCalendarLoading(false);
         return;
       }
@@ -969,7 +985,7 @@ export default function App({ session, onLogout }) {
       const data = await res.json();
 
       if (!res.ok || !data.slots) {
-        notify("カレンダーの取得に失敗しました");
+        if (!silent) notify("カレンダーの取得に失敗しました");
         setCalendarLoading(false);
         return;
       }
@@ -1003,11 +1019,11 @@ export default function App({ session, onLogout }) {
         }));
         const removedCount = currentSlots.filter(s => busyKeys.includes(s)).length;
         const addedCount   = availableKeys.filter(s => !currentSlots.includes(s)).length;
-        notify(`📅 同期完了: ${addedCount}枠追加、${removedCount}枠削除（予定あり）`);
+        if (!silent) notify(`📅 同期完了: ${addedCount}枠追加、${removedCount}枠削除（予定あり）`);
       }
       setCalendarSynced(true);
     } catch (err) {
-      notify("カレンダーの取得中にエラーが発生しました");
+      if (!silent) notify("カレンダーの取得中にエラーが発生しました");
     }
     setCalendarLoading(false);
   };
