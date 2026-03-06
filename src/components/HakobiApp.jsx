@@ -794,7 +794,7 @@ export default function App({ session, onLogout }) {
   // 候補者・面接官編集
   const [showCandForm, setShowCandForm]       = useState(false);
   const [editingCand, setEditingCand]         = useState(null); // null=新規, obj=編集
-  const [candForm, setCandForm]               = useState({ name: "", position: "フロントエンドエンジニア", stage: "書類選考" });
+  const [candForm, setCandForm]               = useState({ name: "", position: "フロントエンドエンジニア", stage: "書類選考", screening_iv_id: "" });
   const [showIvForm, setShowIvForm]           = useState(false);
   const [editingIv, setEditingIv]             = useState(null);
   const [ivForm, setIvForm]                   = useState({ name: "", role: "", slack_handle: "" });
@@ -932,8 +932,9 @@ export default function App({ session, onLogout }) {
     const { data } = await supabase.from("candidates").insert({
       name: form.name, position: form.position, stage: form.stage,
       schedule_status: "awaiting_proposal", timeline,
+      screening_iv_id: form.screening_iv_id || null,
     }).select().single();
-    if (data) setCandidates(prev => [...prev, { ...data, scheduleStatus: data.schedule_status, timeline: data.timeline || [] }]);
+    if (data) setCandidates(prev => [...prev, { ...data, scheduleStatus: data.schedule_status, timeline: data.timeline || [], screeningIvId: data.screening_iv_id }]);
   };
 
   // ── Supabase: 候補者更新 ────────────────────────────────────────────────
@@ -1554,7 +1555,7 @@ export default function App({ session, onLogout }) {
                 <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 14 }}>
                   {editingCand ? "候補者を編集" : "新しい候補者"}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
                   <div>
                     <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>氏名</div>
                     <input value={candForm.name} onChange={e => setCandForm(f => ({ ...f, name: e.target.value }))}
@@ -1577,6 +1578,14 @@ export default function App({ session, onLogout }) {
                       {["書類選考","一次面接","二次面接","最終面接","内定"].map(s => (
                         <option key={s} value={s}>{s}</option>
                       ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>書類選考担当者</div>
+                    <select value={candForm.screening_iv_id} onChange={e => setCandForm(f => ({ ...f, screening_iv_id: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text, background: C.surface }}>
+                      <option value="">指定なし</option>
+                      {interviewers.map(iv => <option key={iv.id} value={iv.id}>{iv.name}</option>)}
                     </select>
                   </div>
                 </div>
