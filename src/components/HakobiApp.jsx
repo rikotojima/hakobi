@@ -1181,11 +1181,23 @@ export default function App({ session, onLogout }) {
             return `${mention} 【${label}】${r.candidate ? `候補者: ${r.candidate}　` : ""}${r.text}`;
           };
 
-          const handleSlackSend = (r) => {
+          const handleSlackSend = async (r) => {
             const msg = buildSlackMessage(r);
-            // Slack Webhook / Deep-link: デモとしてクリップボードにコピー
-            navigator.clipboard?.writeText(msg).catch(() => {});
-            alert(`Slackに送信する内容をクリップボードにコピーしました:\n\n${msg}\n\n※本番実装時はSlack Webhook URLに POST します。`);
+            try {
+              const res = await fetch("/api/slack-notify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg }),
+              });
+              if (res.ok) {
+                notify("Slackに送信しました 💬");
+              } else {
+                const data = await res.json();
+                notify(`Slack送信失敗: ${data.error || "不明なエラー"}`);
+              }
+            } catch (err) {
+              notify("Slack送信中にエラーが発生しました");
+            }
           };
 
           return (
