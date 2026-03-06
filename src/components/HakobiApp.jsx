@@ -789,6 +789,13 @@ export default function App({ session, onLogout }) {
   const [newReminderType, setNewReminderType] = useState("comment_needed");
   const [newReminderIv, setNewReminderIv]     = useState("");
   const [newReminderCand, setNewReminderCand] = useState("");
+  // 候補者・面接官編集
+  const [showCandForm, setShowCandForm]       = useState(false);
+  const [editingCand, setEditingCand]         = useState(null); // null=新規, obj=編集
+  const [candForm, setCandForm]               = useState({ name: "", position: "フロントエンドエンジニア", stage: "書類選考" });
+  const [showIvForm, setShowIvForm]           = useState(false);
+  const [editingIv, setEditingIv]             = useState(null);
+  const [ivForm, setIvForm]                   = useState({ name: "", role: "", slack_handle: "" });
 
   // ── Supabase: 初回データ読み込み ──────────────────────────────────────────
   useEffect(() => {
@@ -897,6 +904,39 @@ export default function App({ session, onLogout }) {
     }).eq("id", candidate.id);
   };
 
+  // ── Supabase: 候補者追加 ────────────────────────────────────────────────
+  const addCandidate = async (form) => {
+    const timeline = ["書類選考","一次面接","二次面接","最終面接","内定"].map((stage, i) => ({
+      stage, status: i === 0 ? "current" : "upcoming", comments: [],
+    }));
+    const { data } = await supabase.from("candidates").insert({
+      name: form.name, position: form.position, stage: form.stage,
+      schedule_status: "awaiting_proposal", timeline,
+    }).select().single();
+    if (data) setCandidates(prev => [...prev, { ...data, scheduleStatus: data.schedule_status, timeline: data.timeline || [] }]);
+  };
+
+  // ── Supabase: 候補者更新 ────────────────────────────────────────────────
+  const updateCandidate = async (id, form) => {
+    await supabase.from("candidates").update({ name: form.name, position: form.position }).eq("id", id);
+    setCandidates(prev => prev.map(c => c.id === id ? { ...c, ...form } : c));
+  };
+
+  // ── Supabase: 候補者削除 ────────────────────────────────────────────────
+  const deleteCandidate = async (id) => {
+    if (!confirm("この候補者を削除しますか？")) return;
+    await supabase.from("candidates").delete().eq("id", id);
+    setCandidates(prev => prev.filter(c => c.id !== id));
+    notify("候補者を削除しました");
+  };
+
+  // ── Supabase: 面接官更新 ────────────────────────────────────────────────
+  const updateInterviewer = async (id, form) => {
+    await supabase.from("interviewers").update({ name: form.name, role: form.role, slack_handle: form.slack_handle }).eq("id", id);
+    setInterviewers(prev => prev.map(iv => iv.id === id ? { ...iv, ...form, slackHandle: form.slack_handle } : iv));
+    notify("面接官情報を更新しました");
+  };
+
   // ── Supabase: リマインダー追加 ───────────────────────────────────────────
   const addReminder = async (reminder) => {
     const { data } = await supabase.from("reminders").insert(reminder).select().single();
@@ -934,30 +974,36 @@ export default function App({ session, onLogout }) {
         return;
       }
 
+      const busyKeys = data.busyKeys || [];
+
       // ログインユーザーの名前でマッチする面接官を探してスロットを更新
       const userName = session?.user?.user_metadata?.name || session?.user?.email || "";
+      const userEmail = session?.user?.email || "";
       const matched  = interviewers.find(iv =>
+        iv.email === userEmail ||
         userName.includes(iv.name.replace(" ", "")) ||
         iv.name.split(" ").some(n => userName.includes(n))
       );
 
-      if (matched) {
-        const newSlots = data.slots.map(s => `${s.dateKey}-${s.timeKey}`);
+      const targetIv = matched || interviewers.find(iv => iv.id === selectedInterviewer);
+
+      if (targetIv) {
+        // 空き枠を追加し、busyKeysに含まれる枠は削除
+        const availableKeys = data.slots.map(s => s.key);
+        const currentSlots  = targetIv.slots || [];
+        // 既存スロットからbusyを除外し、新しい空き枠を追加
+        const newSlots = [
+          ...currentSlots.filter(s => !busyKeys.includes(s)),
+          ...availableKeys.filter(s => !currentSlots.includes(s)),
+        ];
         setInterviewers(prev => prev.map(iv => {
-          if (iv.id !== matched.id) return iv;
+          if (iv.id !== targetIv.id) return iv;
           syncInterviewerSlots(iv.id, newSlots);
           return { ...iv, slots: newSlots };
         }));
-        notify(`${matched.name} のカレンダーから ${data.slots.length} 枠を取得しました 📅`);
-      } else {
-        // マッチしない場合は選択中の面接官に反映
-        const newSlots = data.slots.map(s => `${s.dateKey}-${s.timeKey}`);
-        setInterviewers(prev => prev.map(iv => {
-          if (iv.id !== selectedInterviewer) return iv;
-          syncInterviewerSlots(iv.id, newSlots);
-          return { ...iv, slots: newSlots };
-        }));
-        notify(`カレンダーから ${data.slots.length} 枠を取得しました 📅`);
+        const removedCount = currentSlots.filter(s => busyKeys.includes(s)).length;
+        const addedCount   = availableKeys.filter(s => !currentSlots.includes(s)).length;
+        notify(`📅 同期完了: ${addedCount}枠追加、${removedCount}枠削除（予定あり）`);
       }
       setCalendarSynced(true);
     } catch (err) {
@@ -1223,21 +1269,54 @@ export default function App({ session, onLogout }) {
             <div style={{ display: "grid", gridTemplateColumns: "270px 1fr", gap: 22 }}>
               {/* Left panel */}
               <div>
-                <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 11, color: C.muted, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>面接官</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 11, color: C.muted, letterSpacing: "0.08em", textTransform: "uppercase" }}>面接官</div>
+                </div>
+
+                {/* 面接官編集フォーム */}
+                {showIvForm && editingIv && (
+                  <div style={{ background: "#f0f4ff", border: "1px solid #2563eb33", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontFamily: FONT, fontWeight: 700, color: C.text, marginBottom: 10 }}>面接官情報を編集</div>
+                    {[
+                      { label: "氏名", key: "name", placeholder: "田中 誠" },
+                      { label: "役職", key: "role", placeholder: "エンジニアリングマネージャー" },
+                      { label: "Slack ID", key: "slack_handle", placeholder: "U012AB3CD" },
+                    ].map(({ label, key, placeholder }) => (
+                      <div key={key} style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 10, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 3 }}>{label}</div>
+                        <input value={ivForm[key]} onChange={e => setIvForm(f => ({ ...f, [key]: e.target.value }))}
+                          placeholder={placeholder}
+                          style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 7, padding: "6px 9px", fontFamily: FONT_BODY, fontSize: 12, color: C.text, background: C.surface }} />
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 10 }}>
+                      <button onClick={() => setShowIvForm(false)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 12, color: C.muted }}>キャンセル</button>
+                      <button onClick={async () => { await updateInterviewer(editingIv.id, ivForm); setShowIvForm(false); }} style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 7, padding: "5px 14px", cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 12 }}>保存</button>
+                    </div>
+                  </div>
+                )}
+
                 {interviewers.map((iv, i) => (
-                  <div key={iv.id} onClick={() => setSelectedInterviewer(iv.id)} style={{
+                  <div key={iv.id} style={{
                     background: selectedInterviewer === iv.id ? C.card : C.surface,
                     border: `1px solid ${selectedInterviewer === iv.id ? avatarColors[i] + "66" : C.border}`,
                     borderRadius: 12, padding: "12px 14px", marginBottom: 8,
-                    cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: 10,
+                    transition: "all 0.15s", display: "flex", alignItems: "center", gap: 10,
                     boxShadow: selectedInterviewer === iv.id ? C.shadow : "none",
                   }}>
-                    <Avatar label={iv.avatar} size={36} color={avatarColors[i]} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>{iv.name}</div>
-                      <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{iv.role}</div>
+                    <div onClick={() => setSelectedInterviewer(iv.id)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, cursor: "pointer", minWidth: 0 }}>
+                      <Avatar label={iv.avatar} size={36} color={avatarColors[i]} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>{iv.name}</div>
+                        <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{iv.role}</div>
+                        {iv.slackHandle && <div style={{ fontSize: 10, color: "#2563eb", marginTop: 1 }}>ID: {iv.slackHandle}</div>}
+                      </div>
+                      <Tag color={iv.slots.length > 0 ? C.green : C.yellow}>{iv.slots.length}枠</Tag>
                     </div>
-                    <Tag color={iv.slots.length > 0 ? C.green : C.yellow}>{iv.slots.length}枠</Tag>
+                    <button onClick={() => { setEditingIv(iv); setIvForm({ name: iv.name, role: iv.role, slack_handle: iv.slackHandle || "" }); setShowIvForm(true); }} style={{
+                      background: "none", border: `1px solid ${C.border}`, borderRadius: 6,
+                      padding: "3px 8px", cursor: "pointer", fontSize: 11, color: C.muted,
+                    }}>✏️</button>
                   </div>
                 ))}
 
@@ -1375,7 +1454,60 @@ export default function App({ session, onLogout }) {
         {/* ══ Candidates ══ */}
         {tab === "candidates" && (
           <div style={{ animation: "fadeUp 0.25s ease" }}>
-            <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 22, color: C.text, marginBottom: 16 }}>応募者管理</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 22, color: C.text }}>応募者管理</div>
+              <button onClick={() => { setEditingCand(null); setCandForm({ name: "", position: "フロントエンドエンジニア", stage: "書類選考" }); setShowCandForm(true); }} style={{
+                background: "#2563eb", color: "#fff", border: "none", borderRadius: 10,
+                padding: "8px 18px", cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
+              }}>+ 候補者を追加</button>
+            </div>
+
+            {/* 候補者追加・編集フォーム */}
+            {showCandForm && (
+              <div style={{ background: "#f0f4ff", border: "1px solid #2563eb33", borderRadius: 14, padding: "18px 20px", marginBottom: 20 }}>
+                <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 14 }}>
+                  {editingCand ? "候補者を編集" : "新しい候補者"}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>氏名</div>
+                    <input value={candForm.name} onChange={e => setCandForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="例：山田 太郎"
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text, background: C.surface }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>ポジション</div>
+                    <select value={candForm.position} onChange={e => setCandForm(f => ({ ...f, position: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text, background: C.surface }}>
+                      {["フロントエンドエンジニア","バックエンドエンジニア","プロダクトマネージャー","デザイナー","データサイエンティスト","セールス","カスタマーサクセス"].map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>現在のステージ</div>
+                    <select value={candForm.stage} onChange={e => setCandForm(f => ({ ...f, stage: e.target.value }))}
+                      style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text, background: C.surface }}>
+                      {["書類選考","一次面接","二次面接","最終面接","内定"].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button onClick={() => setShowCandForm(false)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 13, color: C.muted }}>キャンセル</button>
+                  <button onClick={async () => {
+                    if (!candForm.name.trim()) return;
+                    if (editingCand) { await updateCandidate(editingCand.id, candForm); notify("候補者情報を更新しました"); }
+                    else { await addCandidate(candForm); notify("候補者を追加しました"); }
+                    setShowCandForm(false);
+                  }} style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13 }}>
+                    {editingCand ? "更新する" : "追加する"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <PositionTabs value={positionFilter} onChange={setPositionFilter} />
             <div style={{ display: "grid", gap: 12 }}>
               {filteredCandidates.map(c => {
@@ -1421,6 +1553,16 @@ export default function App({ session, onLogout }) {
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 7, flexDirection: "column", alignItems: "flex-end", flexShrink: 0 }}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="act-btn" onClick={() => { setEditingCand(c); setCandForm({ name: c.name, position: c.position, stage: c.stage }); setShowCandForm(true); }} style={{
+                          background: C.surface, border: `1px solid ${C.border}`, color: C.muted,
+                          borderRadius: 8, padding: "5px 10px", fontFamily: FONT_BODY, fontSize: 11, cursor: "pointer",
+                        }}>✏️ 編集</button>
+                        <button className="act-btn" onClick={() => deleteCandidate(c.id)} style={{
+                          background: C.surface, border: `1px solid #fca5a5`, color: C.red,
+                          borderRadius: 8, padding: "5px 10px", fontFamily: FONT_BODY, fontSize: 11, cursor: "pointer",
+                        }}>🗑️ 削除</button>
+                      </div>
                       <button className="act-btn" onClick={() => setTimelineCandidate(c)} style={{
                         background: C.card, border: `1px solid ${C.border}`,
                         color: C.text, borderRadius: 8, padding: "7px 13px",
