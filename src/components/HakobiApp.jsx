@@ -468,15 +468,52 @@ export default function App({ session, onLogout }) {
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
+
+      // ログインユーザー情報を取得
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const currentUser = currentSession?.user;
+      const userName    = currentUser?.user_metadata?.name || currentUser?.email?.split("@")[0] || "";
+      const userAvatar  = userName[0] || "?";
+      const userEmail   = currentUser?.email || "";
+
       const [{ data: ivData }, { data: cData }, { data: rData }] = await Promise.all([
         supabase.from("interviewers").select("*").order("created_at"),
         supabase.from("candidates").select("*").order("created_at"),
         supabase.from("reminders").select("*").order("created_at", { ascending: false }),
       ]);
 
+      let interviewerList = [];
+
       if (ivData?.length) {
-        setInterviewers(ivData.map(iv => ({ ...iv, slots: iv.slots || [] })));
-        setSelectedInterviewer(ivData[0].id);
+        interviewerList = ivData.map(iv => ({ ...iv, slots: iv.slots || [], slackHandle: iv.slack_handle }));
+
+        // ログインユーザーがまだ面接官リストにいなければ自動追加
+        const alreadyExists = interviewerList.some(iv =>
+          iv.email === userEmail || iv.name === userName
+        );
+        if (!alreadyExists && userEmail) {
+          const { data: newIv } = await supabase
+            .from("interviewers")
+            .insert({
+              name:         userName,
+              role:         "面接官",
+              avatar:       userAvatar,
+              slack_handle: "",
+              slots:        [],
+              email:        userEmail,
+            })
+            .select()
+            .single();
+          if (newIv) {
+            interviewerList = [...interviewerList, { ...newIv, slots: [], slackHandle: "" }];
+          }
+        }
+
+        setInterviewers(interviewerList);
+        // ログインユーザー自身を初期選択
+        const myRecord = interviewerList.find(iv => iv.email === userEmail);
+        setSelectedInterviewer(myRecord?.id || interviewerList[0].id);
+
       } else {
         // DBが空なら初期データをinsert
         const { data: inserted } = await supabase
@@ -485,8 +522,9 @@ export default function App({ session, onLogout }) {
             slack_handle: iv.slackHandle, slots: iv.slots,
           }))).select();
         if (inserted) {
-          setInterviewers(inserted.map(iv => ({ ...iv, slots: iv.slots || [], slackHandle: iv.slack_handle })));
-          setSelectedInterviewer(inserted[0].id);
+          interviewerList = inserted.map(iv => ({ ...iv, slots: iv.slots || [], slackHandle: iv.slack_handle }));
+          setInterviewers(interviewerList);
+          setSelectedInterviewer(interviewerList[0].id);
         }
       }
 
