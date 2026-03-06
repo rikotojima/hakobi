@@ -84,11 +84,31 @@ const initialCandidates = [
 
 const timeSlots = ["09:00","10:00","11:00","13:00","14:00","15:00","16:00","17:00"];
 
+// ── 日本の祝日 2025-2026 ─────────────────────────────────────────────────────
+const JP_HOLIDAYS = new Set([
+  "2025-01-01","2025-01-13","2025-02-11","2025-02-23","2025-02-24",
+  "2025-03-20","2025-04-29","2025-05-03","2025-05-04","2025-05-05",
+  "2025-05-06","2025-07-21","2025-08-11","2025-09-15","2025-09-22",
+  "2025-09-23","2025-10-13","2025-11-03","2025-11-23","2025-11-24",
+  "2026-01-01","2026-01-12","2026-02-11","2026-02-23","2026-03-20",
+  "2026-04-29","2026-05-03","2026-05-04","2026-05-05","2026-05-06",
+  "2026-07-20","2026-08-11","2026-09-21","2026-09-22","2026-09-23",
+  "2026-10-12","2026-11-03","2026-11-23",
+]);
+
+function isHoliday(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return JP_HOLIDAYS.has(`${y}-${m}-${d}`);
+}
+
 function getDaysFromNow(n) {
   const days = [];
   for (let i = 1; days.length < n; i++) {
     const d = new Date(); d.setDate(d.getDate() + i);
-    if (d.getDay() !== 0 && d.getDay() !== 6) days.push(d);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6 && !isHoliday(d)) days.push(new Date(d));
   }
   return days;
 }
@@ -463,6 +483,7 @@ export default function App({ session, onLogout }) {
   const [loading, setLoading]                 = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarSynced, setCalendarSynced]   = useState(false);
+  const [weekPage, setWeekPage]               = useState(0); // 0=1週目, 1=2週目...
 
   // ── Supabase: 初回データ読み込み ──────────────────────────────────────────
   useEffect(() => {
@@ -970,42 +991,77 @@ export default function App({ session, onLogout }) {
                     )}
                   </button>
                 </div>
-                <div style={{ overflowX: "auto", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 16 }}>
-                  <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 4 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ width: 56, color: C.muted, fontFamily: FONT, fontSize: 10, textAlign: "left", paddingBottom: 8 }}></th>
-                        {days.map(day => (
-                          <th key={day.toISOString()} style={{ color: C.text, fontFamily: FONT, fontWeight: 700, fontSize: 11, textAlign: "center", paddingBottom: 8, minWidth: 78 }}>{formatDate(day)}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {timeSlots.map(time => (
-                        <tr key={time}>
-                          <td style={{ color: C.muted, fontSize: 11, paddingRight: 6, whiteSpace: "nowrap" }}>{time}</td>
-                          {days.map(day => {
-                            const key    = `${formatDate(day)}-${time}`;
-                            const active = interviewer?.slots.includes(key);
-                            const isCommon = commonSlots.find(s => s.key === key);
-                            return (
-                              <td key={day.toISOString()} style={{ textAlign: "center" }}>
-                                <button className={`slot-btn ${active ? "active" : ""}`} onClick={() => toggleSlot(selectedInterviewer, day, time)} style={{
-                                  width: "100%", height: 32, borderRadius: 6,
-                                  border: `1px solid ${active ? "#2563eb" : C.border}`,
-                                  background: active ? "#dbeafe" : C.bg,
-                                  color: active ? "#2563eb" : C.muted,
-                                  cursor: "pointer", fontSize: 13,
-                                  outline: isCommon ? `2px solid ${C.green}44` : "none",
-                                }}>{active ? "✓" : ""}</button>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {/* ページネーション */}
+                {(() => {
+                  const pageSize   = 5;
+                  const totalPages = Math.ceil(days.length / pageSize);
+                  const pageDays   = days.slice(weekPage * pageSize, weekPage * pageSize + pageSize);
+                  return (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <button
+                          onClick={() => setWeekPage(p => Math.max(0, p - 1))}
+                          disabled={weekPage === 0}
+                          style={{
+                            background: weekPage === 0 ? C.card : C.surface,
+                            border: `1px solid ${C.border}`, borderRadius: 8,
+                            padding: "6px 14px", cursor: weekPage === 0 ? "default" : "pointer",
+                            fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
+                            color: weekPage === 0 ? C.muted : C.text,
+                          }}>← 前の週</button>
+                        <span style={{ fontFamily: FONT_BODY, fontSize: 12, color: C.muted }}>
+                          {weekPage + 1} / {totalPages} 週
+                        </span>
+                        <button
+                          onClick={() => setWeekPage(p => Math.min(totalPages - 1, p + 1))}
+                          disabled={weekPage >= totalPages - 1}
+                          style={{
+                            background: weekPage >= totalPages - 1 ? C.card : "#2563eb",
+                            border: "none", borderRadius: 8,
+                            padding: "6px 14px", cursor: weekPage >= totalPages - 1 ? "default" : "pointer",
+                            fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
+                            color: weekPage >= totalPages - 1 ? C.muted : "#fff",
+                          }}>次の週 →</button>
+                      </div>
+                      <div style={{ background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 16 }}>
+                        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 4 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ width: 56, color: C.muted, fontFamily: FONT, fontSize: 10, textAlign: "left", paddingBottom: 8 }}></th>
+                              {pageDays.map(day => (
+                                <th key={day.toISOString()} style={{ color: C.text, fontFamily: FONT, fontWeight: 700, fontSize: 11, textAlign: "center", paddingBottom: 8, minWidth: 78 }}>{formatDate(day)}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {timeSlots.map(time => (
+                              <tr key={time}>
+                                <td style={{ color: C.muted, fontSize: 11, paddingRight: 6, whiteSpace: "nowrap" }}>{time}</td>
+                                {pageDays.map(day => {
+                                  const key      = `${formatDate(day)}-${time}`;
+                                  const active   = interviewer?.slots.includes(key);
+                                  const isCommon = commonSlots.find(s => s.key === key);
+                                  return (
+                                    <td key={day.toISOString()} style={{ textAlign: "center" }}>
+                                      <button className={`slot-btn ${active ? "active" : ""}`} onClick={() => toggleSlot(selectedInterviewer, day, time)} style={{
+                                        width: "100%", height: 32, borderRadius: 6,
+                                        border: `1px solid ${active ? "#2563eb" : C.border}`,
+                                        background: active ? "#dbeafe" : C.bg,
+                                        color: active ? "#2563eb" : C.muted,
+                                        cursor: "pointer", fontSize: 13,
+                                        outline: isCommon ? `2px solid ${C.green}44` : "none",
+                                      }}>{active ? "✓" : ""}</button>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
