@@ -460,7 +460,8 @@ export default function App({ session, onLogout }) {
   const [reminderTab, setReminderTab]                 = useState("all");
   const [reminderInterviewer, setReminderInterviewer] = useState("all");
   const [reminders, setReminders]                     = useState([]);
-  const [loading, setLoading]                         = useState(true);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarSynced, setCalendarSynced]   = useState(false);
 
   // ── Supabase: 初回データ読み込み ──────────────────────────────────────────
   useEffect(() => {
@@ -544,6 +545,61 @@ export default function App({ session, onLogout }) {
   };
 
   const notify = (msg) => setNotification(msg);
+
+  // ── Google Calendar から空き枠を自動取得 ─────────────────────────────────
+  const syncCalendar = async () => {
+    setCalendarLoading(true);
+    try {
+      // Supabaseセッションからprovider_token（GoogleのOAuthトークン）を取得
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.provider_token;
+
+      if (!accessToken) {
+        notify("Googleカレンダーの権限がありません。一度ログアウトして再ログインしてください。");
+        setCalendarLoading(false);
+        return;
+      }
+
+      const res = await fetch(`/api/calendar-slots?access_token=${accessToken}&days=5`);
+      const data = await res.json();
+
+      if (!res.ok || !data.slots) {
+        notify("カレンダーの取得に失敗しました");
+        setCalendarLoading(false);
+        return;
+      }
+
+      // ログインユーザーの名前でマッチする面接官を探してスロットを更新
+      const userName = session?.user?.user_metadata?.name || session?.user?.email || "";
+      const matched  = interviewers.find(iv =>
+        userName.includes(iv.name.replace(" ", "")) ||
+        iv.name.split(" ").some(n => userName.includes(n))
+      );
+
+      if (matched) {
+        const newSlots = data.slots.map(s => `${s.dateKey}-${s.timeKey}`);
+        setInterviewers(prev => prev.map(iv => {
+          if (iv.id !== matched.id) return iv;
+          syncInterviewerSlots(iv.id, newSlots);
+          return { ...iv, slots: newSlots };
+        }));
+        notify(`${matched.name} のカレンダーから ${data.slots.length} 枠を取得しました 📅`);
+      } else {
+        // マッチしない場合は選択中の面接官に反映
+        const newSlots = data.slots.map(s => `${s.dateKey}-${s.timeKey}`);
+        setInterviewers(prev => prev.map(iv => {
+          if (iv.id !== selectedInterviewer) return iv;
+          syncInterviewerSlots(iv.id, newSlots);
+          return { ...iv, slots: newSlots };
+        }));
+        notify(`カレンダーから ${data.slots.length} 枠を取得しました 📅`);
+      }
+      setCalendarSynced(true);
+    } catch (err) {
+      notify("カレンダーの取得中にエラーが発生しました");
+    }
+    setCalendarLoading(false);
+  };
   const avatarColors = ["#2563eb", "#7c3aed", "#0891b2"];
 
   const allPositions = ["全て", ...Array.from(new Set(candidates.map(c => c.position)))];
@@ -837,9 +893,43 @@ export default function App({ session, onLogout }) {
 
               {/* Calendar */}
               <div>
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 17, color: C.text }}>{interviewer?.name} の空き時間</div>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>クリックして空き時間を登録・解除</div>
+                <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 17, color: C.text }}>{interviewer?.name} の空き時間</div>
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>クリックして空き時間を登録・解除</div>
+                  </div>
+                  {/* Google Calendar 同期ボタン */}
+                  <button
+                    onClick={syncCalendar}
+                    disabled={calendarLoading}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 7,
+                      background: calendarSynced ? "#f0fdf4" : "#fff",
+                      border: `1px solid ${calendarSynced ? C.green : C.border}`,
+                      borderRadius: 10, padding: "8px 16px", cursor: calendarLoading ? "default" : "pointer",
+                      fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
+                      color: calendarSynced ? C.green : C.text,
+                      boxShadow: C.shadow, transition: "all 0.15s",
+                    }}
+                  >
+                    {calendarLoading ? (
+                      <>⏳ 取得中...</>
+                    ) : calendarSynced ? (
+                      <>✓ カレンダー同期済み</>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                          <rect x="3" y="4" width="18" height="18" rx="3" stroke="#2563eb" strokeWidth="2"/>
+                          <path d="M3 9h18" stroke="#2563eb" strokeWidth="2"/>
+                          <path d="M8 2v4M16 2v4" stroke="#2563eb" strokeWidth="2" strokeLinecap="round"/>
+                          <circle cx="8" cy="14" r="1.5" fill="#2563eb"/>
+                          <circle cx="12" cy="14" r="1.5" fill="#2563eb"/>
+                          <circle cx="16" cy="14" r="1.5" fill="#2563eb"/>
+                        </svg>
+                        Googleカレンダーから取得
+                      </>
+                    )}
+                  </button>
                 </div>
                 <div style={{ overflowX: "auto", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, padding: 16 }}>
                   <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 4 }}>
