@@ -774,6 +774,8 @@ export default function App({ session, onLogout }) {
   const [selectedInterviewer, setSelectedInterviewer] = useState(null);
   const [notification, setNotification]               = useState(null);
   const [proposedSlots, setProposedSlots]             = useState({});
+  const [proposeModal, setProposeModal]               = useState(null); // candidateId
+  const [selectedIvIds, setSelectedIvIds]             = useState([]);
   const [timelineCandidate, setTimelineCandidate]     = useState(null);
   const [positionFilter, setPositionFilter]           = useState("全て");
   const [reminderTab, setReminderTab]                 = useState("all");
@@ -1042,20 +1044,29 @@ export default function App({ session, onLogout }) {
     }));
   };
 
-  const getCommonSlots = () => {
-    const allSlots = interviewers.map(iv => new Set(iv.slots));
+  const getCommonSlots = (ivIds = null) => {
+    const targetIvs = ivIds
+      ? interviewers.filter(iv => ivIds.includes(iv.id))
+      : interviewers;
+    const allSlots = targetIvs.map(iv => new Set(iv.slots));
     const common = [];
     days.forEach(day => timeSlots.forEach(time => {
       const key = `${formatDate(day)}-${time}`;
       const count = allSlots.filter(s => s.has(key)).length;
-      if (count >= 2) common.push({ key, day, time, count });
+      if (count >= 1 && count >= Math.min(2, targetIvs.length)) common.push({ key, day, time, count });
     }));
     return common.slice(0, 6);
   };
 
   const proposeToCandidate = (candidateId) => {
-    const common = getCommonSlots();
-    if (!common.length) { notify("先に面接官の空き時間を登録してください"); return; }
+    // モーダルを開いて面接官を選択させる
+    setSelectedIvIds(interviewers.map(iv => iv.id)); // デフォルト全員選択
+    setProposeModal(candidateId);
+  };
+
+  const confirmPropose = (candidateId) => {
+    const common = getCommonSlots(selectedIvIds);
+    if (!common.length) { notify("選択した面接官の共通空き時間がありません"); return; }
     setProposedSlots(prev => ({ ...prev, [candidateId]: common.slice(0, 3) }));
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
@@ -1063,6 +1074,7 @@ export default function App({ session, onLogout }) {
       syncCandidate(updated);
       return updated;
     }));
+    setProposeModal(null);
     notify("候補日程を応募者に送信しました 📧");
   };
 
@@ -1640,6 +1652,94 @@ export default function App({ session, onLogout }) {
           />
         )}
       </div>
+
+      {/* Propose modal: 面接官選択 */}
+      {proposeModal && (() => {
+        const cand = candidates.find(c => c.id === proposeModal);
+        const previewSlots = getCommonSlots(selectedIvIds).slice(0, 3);
+        return (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 300, padding: 20,
+          }}>
+            <div style={{
+              background: "#fff", borderRadius: 20, padding: "28px 32px",
+              width: "100%", maxWidth: 480, boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+            }}>
+              <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 18, color: C.text, marginBottom: 4 }}>
+                面接官を選択
+              </div>
+              <div style={{ fontSize: 13, color: C.muted, fontFamily: FONT_BODY, marginBottom: 20 }}>
+                {cand?.name} さんへ送る候補日時の面接官を選んでください
+              </div>
+
+              {/* 面接官チェックボックス */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+                {interviewers.map((iv, i) => {
+                  const checked = selectedIvIds.includes(iv.id);
+                  return (
+                    <label key={iv.id} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      background: checked ? "#eff6ff" : C.card,
+                      border: `1px solid ${checked ? "#2563eb" : C.border}`,
+                      borderRadius: 12, padding: "12px 16px", cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}>
+                      <input type="checkbox" checked={checked}
+                        onChange={() => setSelectedIvIds(prev =>
+                          prev.includes(iv.id) ? prev.filter(id => id !== iv.id) : [...prev, iv.id]
+                        )}
+                        style={{ width: 16, height: 16, accentColor: "#2563eb", cursor: "pointer" }}
+                      />
+                      <Avatar label={iv.avatar} size={32} color={["#2563eb","#7c3aed","#0891b2"][i % 3]} />
+                      <div>
+                        <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 13, color: C.text }}>{iv.name}</div>
+                        <div style={{ fontSize: 11, color: C.muted }}>{iv.role} · {iv.slots.length}枠登録済み</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {/* プレビュー */}
+              <div style={{ background: C.card, borderRadius: 12, padding: "12px 16px", marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 700, color: C.muted, marginBottom: 8 }}>
+                  共通空き枠プレビュー（最大3件）
+                </div>
+                {previewSlots.length > 0 ? (
+                  previewSlots.map((s, i) => (
+                    <div key={i} style={{ fontSize: 13, color: C.text, fontFamily: FONT_BODY, padding: "4px 0",
+                      borderBottom: i < previewSlots.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                      📅 {formatDate(s.day)} {s.time}
+                      <span style={{ fontSize: 11, color: C.muted, marginLeft: 6 }}>({s.count}名参加可)</span>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ fontSize: 12, color: C.red }}>選択した面接官に共通の空き枠がありません</div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => setProposeModal(null)} style={{
+                  background: "none", border: `1px solid ${C.border}`, borderRadius: 10,
+                  padding: "10px 20px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 13, color: C.muted,
+                }}>キャンセル</button>
+                <button onClick={() => confirmPropose(proposeModal)}
+                  disabled={previewSlots.length === 0 || selectedIvIds.length === 0}
+                  style={{
+                    background: previewSlots.length > 0 ? "#2563eb" : C.border,
+                    color: "#fff", border: "none", borderRadius: 10,
+                    padding: "10px 24px", cursor: previewSlots.length > 0 ? "pointer" : "default",
+                    fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+                  }}>
+                  この日程を送る
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Timeline modal */}
       {timelineCandidate && (
