@@ -49,12 +49,6 @@ export default function Page() {
         queryParams: {
           access_type: "offline",
           prompt:      "consent",
-          scope: [
-            "openid",
-            "email",
-            "profile",
-            "https://www.googleapis.com/auth/calendar.readonly",
-          ].join(" "),
         },
       },
     });
