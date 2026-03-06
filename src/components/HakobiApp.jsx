@@ -1083,7 +1083,7 @@ export default function App({ session, onLogout }) {
     setProposeModal(candidateId);
   };
 
-  const confirmPropose = (candidateId) => {
+  const confirmPropose = async (candidateId) => {
     const common = getCommonSlots(selectedIvIds);
     if (!common.length) { notify("選択した面接官の共通空き時間がありません"); return; }
     // スロット情報と面接官IDを一緒に保存
