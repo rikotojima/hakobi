@@ -1067,7 +1067,8 @@ export default function App({ session, onLogout }) {
   const confirmPropose = (candidateId) => {
     const common = getCommonSlots(selectedIvIds);
     if (!common.length) { notify("選択した面接官の共通空き時間がありません"); return; }
-    setProposedSlots(prev => ({ ...prev, [candidateId]: common.slice(0, 3) }));
+    // スロット情報と面接官IDを一緒に保存
+    setProposedSlots(prev => ({ ...prev, [candidateId]: { slots: common.slice(0, 3), ivIds: selectedIvIds } }));
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
       const updated = { ...c, scheduleStatus: "proposed" };
@@ -1078,16 +1079,34 @@ export default function App({ session, onLogout }) {
     notify("候補日程を応募者に送信しました 📧");
   };
 
-  const confirmSlot = (candidateId, slot) => {
+  const confirmSlot = async (candidateId, slot) => {
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
       const updated = { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key };
       syncCandidate(updated);
       return updated;
     }));
-    const cand = candidates.find(c => c.id === candidateId);
-    addReminder({ text: `面接が確定しました（${slot.time} ${formatDate(slot.day)}）。準備をご確認ください。`, type: "interview_pending", candidate: cand?.name, interviewer: null });
-    notify(`面接日程が確定しました！ ${slot.time} ${formatDate(slot.day)} 🎉`);
+    const cand    = candidates.find(c => c.id === candidateId);
+    const ivIds   = proposedSlots[candidateId]?.ivIds || [];
+    const targetIvs = interviewers.filter(iv => ivIds.includes(iv.id));
+    const dateStr = `${formatDate(slot.day)} ${slot.time}`;
+    const appUrl  = typeof window !== "undefined" ? window.location.origin : "";
+    const link    = `${appUrl}/?candidate=${encodeURIComponent(cand?.name || "")}`;
+
+    // 面接官ごとにリマインダー追加 & Slack送信
+    for (const iv of targetIvs) {
+      const mention = iv.slackHandle ? `<@${iv.slackHandle}>` : iv.name;
+      const msg = `${mention} 【面接準備依頼】候補者: ${cand?.name}　面接日程が確定しました。
+📅 日時: ${dateStr}
+🔗 hakobi で確認: ${link}`;
+      await addReminder({ text: `面接日程が確定しました（${dateStr}）。準備をご確認ください。`, type: "interview_pending", candidate: cand?.name, interviewer: iv.name });
+      await fetch("/api/slack-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+    }
+    notify(`面接日程が確定しました！ ${dateStr} 🎉 面接官${targetIvs.length}名にSlackを送信しました`);
   };
 
   const advanceStage = (candidateId, comment = null) => {
@@ -1605,7 +1624,7 @@ export default function App({ session, onLogout }) {
                       {proposedSlots[c.id] && c.scheduleStatus !== "confirmed" && (
                         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, padding: "9px 13px", minWidth: 210 }}>
                           <div style={{ fontSize: 11, color: C.muted, marginBottom: 7, fontFamily: FONT, fontWeight: 700 }}>候補日程を選択</div>
-                          {proposedSlots[c.id].map((slot, i) => (
+                          {(proposedSlots[c.id]?.slots || proposedSlots[c.id] || []).map((slot, i) => (
                             <button key={i} className="act-btn" onClick={() => confirmSlot(c.id, slot)} style={{
                               display: "block", width: "100%", textAlign: "left",
                               background: C.surface, border: `1px solid ${C.border}`,
