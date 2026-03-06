@@ -916,9 +916,11 @@ export default function App({ session, onLogout }) {
   // ── Supabase: 応募者更新 ─────────────────────────────────────────────────
   const syncCandidate = async (candidate) => {
     await supabase.from("candidates").update({
-      stage: candidate.stage,
+      stage:        candidate.stage,
       schedule_status: candidate.scheduleStatus,
-      timeline: candidate.timeline,
+      timeline:     candidate.timeline,
+      confirmed_at: candidate.confirmedAt || null,
+      confirmed_iv_ids: candidate.confirmedIvIds || null,
     }).eq("id", candidate.id);
   };
 
@@ -1112,10 +1114,13 @@ export default function App({ session, onLogout }) {
     const appUrl    = typeof window !== "undefined" ? window.location.origin : "";
     const link      = `${appUrl}/?candidate=${encodeURIComponent(cand?.name || "")}`;
 
+    // ISO日時を生成（Cron用）
+    const slotIso = slot.start || null; // APIから返ってきたISO文字列
+
     // ステータス更新
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
-      const updated = { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key };
+      const updated = { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key, confirmedAt: slotIso, confirmedIvIds: ivIds };
       syncCandidate(updated);
       return updated;
     }));
