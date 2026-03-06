@@ -501,7 +501,7 @@ function RemindersTab({
           // Slack メッセージ生成
           const buildSlackMessage = (r) => {
             const iv      = interviewers.find(i => i.name === r.interviewer);
-            const mention = iv?.slackHandle ? iv.slackHandle : (r.interviewer || "");
+            const mention = iv?.slackHandle ? `<@${iv.slackHandle}>` : (r.interviewer || "");
             const label   = REMINDER_TABS.find(t => t.id === r.type)?.label || "";
             const appUrl  = typeof window !== "undefined" ? window.location.origin : "";
             const link    = r.candidate
