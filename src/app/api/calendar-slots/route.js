@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic"; // キャッシュ無効化
+export const dynamic = "force-dynamic";
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -11,7 +11,9 @@ export async function GET(request) {
     return NextResponse.json({ error: "access_token は必須です" }, { status: 400 });
   }
 
-  const timeMin = new Date();
+  // 日本時間で tomorrow 〜 days*2日後
+  const nowJST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+  const timeMin = new Date(nowJST);
   timeMin.setDate(timeMin.getDate() + 1);
   timeMin.setHours(0, 0, 0, 0);
 
@@ -23,7 +25,7 @@ export async function GET(request) {
       "https://www.googleapis.com/calendar/v3/freeBusy",
       {
         method: "POST",
-        cache: "no-store", // Googleへのリクエストもキャッシュ無効化
+        cache: "no-store",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
@@ -45,8 +47,6 @@ export async function GET(request) {
     const freeBusy  = await freeBusyRes.json();
     const busySlots = freeBusy.calendars?.primary?.busy || [];
 
-    console.log("Busy slots from Google:", JSON.stringify(busySlots));
-
     const WORK_HOURS = [9, 10, 11, 13, 14, 15, 16, 17];
     const DAY_NAMES  = ["日","月","火","水","木","金","土"];
     const availableSlots = [];
@@ -56,28 +56,36 @@ export async function GET(request) {
     let workdayCount = 0;
 
     while (workdayCount < days) {
-      const dow = cursor.getDay();
+      // cursorを日本時間として解釈
+      const jstStr = cursor.toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
+      const jst    = new Date(jstStr);
+      const dow    = jst.getDay();
+
       if (dow !== 0 && dow !== 6) {
         for (const hour of WORK_HOURS) {
-          const slotStart = new Date(cursor);
-          slotStart.setHours(hour, 0, 0, 0);
-          const slotEnd = new Date(slotStart);
-          slotEnd.setHours(hour + 1, 0, 0, 0);
+          // 日本時間でスロット開始・終了を作成
+          const slotStartJST = new Date(cursor);
+          slotStartJST.setHours(hour, 0, 0, 0);
+          const slotEndJST = new Date(slotStartJST);
+          slotEndJST.setHours(hour + 1, 0, 0, 0);
 
+          // busySlots の時刻と比較（両方 Date オブジェクトとして比較）
           const isBusy = busySlots.some(b => {
             const bs = new Date(b.start);
             const be = new Date(b.end);
-            return slotStart < be && slotEnd > bs;
+            return slotStartJST < be && slotEndJST > bs;
           });
 
-          const dateKey = `${cursor.getMonth() + 1}/${cursor.getDate()}(${DAY_NAMES[dow]})`;
+          const month   = cursor.getMonth() + 1;
+          const date    = cursor.getDate();
+          const dateKey = `${month}/${date}(${DAY_NAMES[dow]})`;
           const timeKey = `${String(hour).padStart(2, "0")}:00`;
           const key     = `${dateKey}-${timeKey}`;
 
           if (isBusy) {
             busyKeys.push(key);
           } else {
-            availableSlots.push({ start: slotStart.toISOString(), end: slotEnd.toISOString(), dateKey, timeKey, key });
+            availableSlots.push({ start: slotStartJST.toISOString(), end: slotEndJST.toISOString(), dateKey, timeKey, key });
           }
         }
         workdayCount++;
