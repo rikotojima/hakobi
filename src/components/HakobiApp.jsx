@@ -86,11 +86,11 @@ const timeSlots = ["09:00","10:00","11:00","13:00","14:00","15:00","16:00","17:0
 
 function getDaysFromNow(n) {
   const days = [];
-  for (let i = 1; i <= n; i++) {
+  for (let i = 1; days.length < n; i++) {
     const d = new Date(); d.setDate(d.getDate() + i);
     if (d.getDay() !== 0 && d.getDay() !== 6) days.push(d);
   }
-  return days.slice(0, 5);
+  return days;
 }
 function formatDate(date) {
   return `${date.getMonth()+1}/${date.getDate()}(${["日","月","火","水","木","金","土"][date.getDay()]})`;
@@ -448,7 +448,7 @@ function CandidateTimeline({ candidate, interviewers, onAdvance, onUpdateTimelin
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App({ session, onLogout }) {
-  const days = getDaysFromNow(7);
+  const days = getDaysFromNow(20);
   const [tab, setTab]                                 = useState("schedule");
   const [interviewers, setInterviewers]               = useState([]);
   const [candidates, setCandidates]                   = useState([]);
@@ -599,7 +599,7 @@ export default function App({ session, onLogout }) {
         return;
       }
 
-      const res = await fetch(`/api/calendar-slots?access_token=${accessToken}&days=5`);
+      const res = await fetch(`/api/calendar-slots?access_token=${accessToken}&days=20`);
       const data = await res.json();
 
       if (!res.ok || !data.slots) {
