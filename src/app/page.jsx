@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { supabase } from "../lib/supabase";
 
-const HakobiApp = dynamic(() => import("../components/HakobiApp"), { ssr: false });
+const HakobiApp   = dynamic(() => import("../components/HakobiApp"),   { ssr: false });
 const LoginScreen = dynamic(() => import("../components/LoginScreen"), { ssr: false });
 
 export default function Page() {
