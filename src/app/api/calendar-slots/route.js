@@ -2,6 +2,25 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+const JST_OFFSET = 9 * 60 * 60 * 1000; // 9時間をミリ秒で
+
+// UTC timestamp → JST の年月日時を返す
+function toJST(date) {
+  const jst = new Date(date.getTime() + JST_OFFSET);
+  return {
+    year:  jst.getUTCFullYear(),
+    month: jst.getUTCMonth() + 1,
+    date:  jst.getUTCDate(),
+    day:   jst.getUTCDay(),
+    hour:  jst.getUTCHours(),
+  };
+}
+
+// JST の年月日時からUTC Dateを作る
+function fromJST(year, month, date, hour) {
+  return new Date(Date.UTC(year, month - 1, date, hour, 0, 0) - JST_OFFSET);
+}
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const accessToken      = searchParams.get("access_token");
@@ -11,14 +30,11 @@ export async function GET(request) {
     return NextResponse.json({ error: "access_token は必須です" }, { status: 400 });
   }
 
-  // 日本時間で tomorrow 〜 days*2日後
-  const nowJST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
-  const timeMin = new Date(nowJST);
-  timeMin.setDate(timeMin.getDate() + 1);
-  timeMin.setHours(0, 0, 0, 0);
-
-  const timeMax = new Date(timeMin);
-  timeMax.setDate(timeMax.getDate() + days * 2);
+  // 今の日本時間の翌日0時（UTC）
+  const nowUTC   = new Date();
+  const nowJST   = toJST(nowUTC);
+  const startUTC = fromJST(nowJST.year, nowJST.month, nowJST.date + 1, 0);
+  const endUTC   = new Date(startUTC.getTime() + days * 2 * 24 * 60 * 60 * 1000);
 
   try {
     const freeBusyRes = await fetch(
@@ -31,8 +47,8 @@ export async function GET(request) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          timeMin:  timeMin.toISOString(),
-          timeMax:  timeMax.toISOString(),
+          timeMin:  startUTC.toISOString(),
+          timeMax:  endUTC.toISOString(),
           timeZone: "Asia/Tokyo",
           items:    [{ id: "primary" }],
         }),
@@ -52,45 +68,37 @@ export async function GET(request) {
     const availableSlots = [];
     const busyKeys       = [];
 
-    const cursor = new Date(timeMin);
+    // 翌日から1日ずつ処理
     let workdayCount = 0;
+    let cursorUTC    = new Date(startUTC);
 
     while (workdayCount < days) {
-      // cursorを日本時間として解釈
-      const jstStr = cursor.toLocaleString("en-US", { timeZone: "Asia/Tokyo" });
-      const jst    = new Date(jstStr);
-      const dow    = jst.getDay();
-
-      if (dow !== 0 && dow !== 6) {
+      const jst = toJST(cursorUTC);
+      if (jst.day !== 0 && jst.day !== 6) {
         for (const hour of WORK_HOURS) {
-          // 日本時間でスロット開始・終了を作成
-          const slotStartJST = new Date(cursor);
-          slotStartJST.setHours(hour, 0, 0, 0);
-          const slotEndJST = new Date(slotStartJST);
-          slotEndJST.setHours(hour + 1, 0, 0, 0);
+          // このスロットのUTC開始・終了
+          const slotStartUTC = fromJST(jst.year, jst.month, jst.date, hour);
+          const slotEndUTC   = fromJST(jst.year, jst.month, jst.date, hour + 1);
 
-          // busySlots の時刻と比較（両方 Date オブジェクトとして比較）
           const isBusy = busySlots.some(b => {
             const bs = new Date(b.start);
             const be = new Date(b.end);
-            return slotStartJST < be && slotEndJST > bs;
+            return slotStartUTC < be && slotEndUTC > bs;
           });
 
-          const month   = cursor.getMonth() + 1;
-          const date    = cursor.getDate();
-          const dateKey = `${month}/${date}(${DAY_NAMES[dow]})`;
+          const dateKey = `${jst.month}/${jst.date}(${DAY_NAMES[jst.day]})`;
           const timeKey = `${String(hour).padStart(2, "0")}:00`;
           const key     = `${dateKey}-${timeKey}`;
 
           if (isBusy) {
             busyKeys.push(key);
           } else {
-            availableSlots.push({ start: slotStartJST.toISOString(), end: slotEndJST.toISOString(), dateKey, timeKey, key });
+            availableSlots.push({ start: slotStartUTC.toISOString(), end: slotEndUTC.toISOString(), dateKey, timeKey, key });
           }
         }
         workdayCount++;
       }
-      cursor.setDate(cursor.getDate() + 1);
+      cursorUTC.setUTCDate(cursorUTC.getUTCDate() + 1);
     }
 
     console.log("Busy keys:", busyKeys);
