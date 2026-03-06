@@ -648,32 +648,7 @@ export default function App() {
     { id: "reminders",  label: `リマインダー${reminders.length ? ` (${reminders.length})` : ""}` },
   ];
 
-  // ── Shared sub-tab renderer ──
-  const PositionTabs = ({ value, onChange }) => (
-    <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-      {allPositions.map(pos => {
-        const pc  = pos === "全て" ? null : posColor(pos);
-        const active = value === pos;
-        return (
-          <button key={pos} onClick={() => onChange(pos)} style={{
-            background: active ? (pc ? pc.main : C.text) : C.surface,
-            border: `1px solid ${active ? (pc ? pc.main : C.text) : C.border}`,
-            borderRadius: 8, padding: "6px 16px", cursor: "pointer",
-            fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
-            color: active ? "#fff" : C.muted, transition: "all 0.15s",
-          }}>
-            {pos === "全て" ? "全て" : (
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: pc?.main, display: "inline-block" }} />
-                {pos} ({candidates.filter(c => c.position === pos).length})
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-
+  // PositionTabs は外部コンポーネントとして定義（下部参照）
   if (loading) return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
       <svg width="46" height="28" viewBox="0 0 46 28" fill="none">
@@ -868,7 +843,7 @@ export default function App() {
         {tab === "candidates" && (
           <div style={{ animation: "fadeUp 0.25s ease" }}>
             <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 22, color: C.text, marginBottom: 16 }}>応募者管理</div>
-            <PositionTabs value={positionFilter} onChange={setPositionFilter} />
+            <PositionTabs value={positionFilter} onChange={setPositionFilter} allPositions={allPositions} candidates={candidates} />
             <div style={{ display: "grid", gap: 12 }}>
               {filteredCandidates.map(c => {
                 const pc = posColor(c.position);
@@ -1135,6 +1110,34 @@ export default function App() {
       )}
 
       {notification && <Notification msg={notification} onClose={() => setNotification(null)} />}
+    </div>
+  );
+}
+
+// ── PositionTabs: App外部のコンポーネント ─────────────────────────────────────
+function PositionTabs({ value, onChange, allPositions, candidates }) {
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+      {allPositions.map(pos => {
+        const pc = pos === "全て" ? null : posColor(pos);
+        const active = value === pos;
+        return (
+          <button key={pos} onClick={() => onChange(pos)} style={{
+            background: active ? (pc ? pc.main : C.text) : C.surface,
+            border: `1px solid ${active ? (pc ? pc.main : C.text) : C.border}`,
+            borderRadius: 8, padding: "6px 16px", cursor: "pointer",
+            fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
+            color: active ? "#fff" : C.muted, transition: "all 0.15s",
+          }}>
+            {pos === "全て" ? "全て" : (
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: pc?.main, display: "inline-block" }} />
+                {pos} ({candidates.filter(c => c.position === pos).length})
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
