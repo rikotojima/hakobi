@@ -460,6 +460,7 @@ export default function App({ session, onLogout }) {
   const [reminderTab, setReminderTab]                 = useState("all");
   const [reminderInterviewer, setReminderInterviewer] = useState("all");
   const [reminders, setReminders]                     = useState([]);
+  const [loading, setLoading]                 = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarSynced, setCalendarSynced]   = useState(false);
 
