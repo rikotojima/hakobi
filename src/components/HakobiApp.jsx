@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { supabase } from "../lib/supabase";
 
 // ── Light mode palette ────────────────────────────────────────────────────────
 const C = {
@@ -448,21 +449,99 @@ function CandidateTimeline({ candidate, interviewers, onAdvance, onUpdateTimelin
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const days = getDaysFromNow(7);
-  const [tab, setTab]                               = useState("schedule");
-  const [interviewers, setInterviewers]             = useState(initialInterviewers);
-  const [candidates, setCandidates]                 = useState(initialCandidates);
-  const [selectedInterviewer, setSelectedInterviewer] = useState(1);
-  const [notification, setNotification]             = useState(null);
-  const [proposedSlots, setProposedSlots]           = useState({});
-  const [timelineCandidate, setTimelineCandidate]   = useState(null);
-  const [positionFilter, setPositionFilter] = useState("全て");
-  const [reminderTab, setReminderTab]               = useState("all");
-  const [reminderInterviewer, setReminderInterviewer] = useState("all");  const [reminders, setReminders] = useState([
-    { id: 1, text: "一次面接の候補日程を提示済み。応募者の返答をお待ちください。",         type: "proposed",          candidate: "鈴木 一郎",  interviewer: null },
-    { id: 2, text: "二次面接の日程について最終確認をお願いします。",                        type: "interviewer_check", candidate: "高橋 明美",  interviewer: "田中 誠" },
-    { id: 3, text: "最終面接（3/10 10:00）の実施をお待ちください。準備をご確認ください。", type: "interview_pending", candidate: "渡辺 健太",  interviewer: "田中 誠" },
-    { id: 4, text: "一次面接が完了しました。選考コメントの入力をお願いします。",            type: "comment_needed",    candidate: "高橋 明美",  interviewer: "佐藤 花" },
-  ]);
+  const [tab, setTab]                                 = useState("schedule");
+  const [interviewers, setInterviewers]               = useState([]);
+  const [candidates, setCandidates]                   = useState([]);
+  const [selectedInterviewer, setSelectedInterviewer] = useState(null);
+  const [notification, setNotification]               = useState(null);
+  const [proposedSlots, setProposedSlots]             = useState({});
+  const [timelineCandidate, setTimelineCandidate]     = useState(null);
+  const [positionFilter, setPositionFilter]           = useState("全て");
+  const [reminderTab, setReminderTab]                 = useState("all");
+  const [reminderInterviewer, setReminderInterviewer] = useState("all");
+  const [reminders, setReminders]                     = useState([]);
+  const [loading, setLoading]                         = useState(true);
+
+  // ── Supabase: 初回データ読み込み ──────────────────────────────────────────
+  useEffect(() => {
+    async function fetchAll() {
+      setLoading(true);
+      const [{ data: ivData }, { data: cData }, { data: rData }] = await Promise.all([
+        supabase.from("interviewers").select("*").order("created_at"),
+        supabase.from("candidates").select("*").order("created_at"),
+        supabase.from("reminders").select("*").order("created_at", { ascending: false }),
+      ]);
+
+      if (ivData?.length) {
+        setInterviewers(ivData.map(iv => ({ ...iv, slots: iv.slots || [] })));
+        setSelectedInterviewer(ivData[0].id);
+      } else {
+        // DBが空なら初期データをinsert
+        const { data: inserted } = await supabase
+          .from("interviewers").insert(initialInterviewers.map(iv => ({
+            name: iv.name, role: iv.role, avatar: iv.avatar,
+            slack_handle: iv.slackHandle, slots: iv.slots,
+          }))).select();
+        if (inserted) {
+          setInterviewers(inserted.map(iv => ({ ...iv, slots: iv.slots || [], slackHandle: iv.slack_handle })));
+          setSelectedInterviewer(inserted[0].id);
+        }
+      }
+
+      if (cData?.length) {
+        setCandidates(cData.map(c => ({ ...c, scheduleStatus: c.schedule_status, timeline: c.timeline || [] })));
+      } else {
+        const { data: inserted } = await supabase
+          .from("candidates").insert(initialCandidates.map(c => ({
+            name: c.name, position: c.position, stage: c.stage,
+            schedule_status: c.scheduleStatus, timeline: c.timeline,
+          }))).select();
+        if (inserted) setCandidates(inserted.map(c => ({ ...c, scheduleStatus: c.schedule_status, timeline: c.timeline || [] })));
+      }
+
+      if (rData?.length) {
+        setReminders(rData);
+      } else {
+        const seedReminders = [
+          { text: "一次面接の候補日程を提示済み。応募者の返答をお待ちください。",         type: "proposed",          candidate: "鈴木 一郎", interviewer: null },
+          { text: "二次面接の日程について最終確認をお願いします。",                        type: "interviewer_check", candidate: "高橋 明美", interviewer: "田中 誠" },
+          { text: "最終面接（3/10 10:00）の実施をお待ちください。準備をご確認ください。", type: "interview_pending", candidate: "渡辺 健太", interviewer: "田中 誠" },
+          { text: "一次面接が完了しました。選考コメントの入力をお願いします。",            type: "comment_needed",    candidate: "高橋 明美", interviewer: "佐藤 花" },
+        ];
+        const { data: inserted } = await supabase.from("reminders").insert(seedReminders).select();
+        if (inserted) setReminders(inserted);
+      }
+
+      setLoading(false);
+    }
+    fetchAll();
+  }, []);
+
+  // ── Supabase: 面接官スロット更新 ─────────────────────────────────────────
+  const syncInterviewerSlots = async (id, slots) => {
+    await supabase.from("interviewers").update({ slots }).eq("id", id);
+  };
+
+  // ── Supabase: 応募者更新 ─────────────────────────────────────────────────
+  const syncCandidate = async (candidate) => {
+    await supabase.from("candidates").update({
+      stage: candidate.stage,
+      schedule_status: candidate.scheduleStatus,
+      timeline: candidate.timeline,
+    }).eq("id", candidate.id);
+  };
+
+  // ── Supabase: リマインダー追加 ───────────────────────────────────────────
+  const addReminder = async (reminder) => {
+    const { data } = await supabase.from("reminders").insert(reminder).select().single();
+    if (data) setReminders(prev => [data, ...prev]);
+  };
+
+  // ── Supabase: リマインダー削除 ───────────────────────────────────────────
+  const deleteReminder = async (id) => {
+    await supabase.from("reminders").delete().eq("id", id);
+    setReminders(prev => prev.filter(r => r.id !== id));
+  };
 
   const notify = (msg) => setNotification(msg);
   const avatarColors = ["#2563eb", "#7c3aed", "#0891b2"];
@@ -475,6 +554,7 @@ export default function App() {
       if (iv.id !== interviewerId) return iv;
       const key = `${formatDate(day)}-${time}`;
       const slots = iv.slots.includes(key) ? iv.slots.filter(s => s !== key) : [...iv.slots, key];
+      syncInterviewerSlots(interviewerId, slots);
       return { ...iv, slots };
     }));
   };
@@ -494,14 +574,24 @@ export default function App() {
     const common = getCommonSlots();
     if (!common.length) { notify("先に面接官の空き時間を登録してください"); return; }
     setProposedSlots(prev => ({ ...prev, [candidateId]: common.slice(0, 3) }));
-    setCandidates(prev => prev.map(c => c.id === candidateId ? { ...c, scheduleStatus: "proposed" } : c));
+    setCandidates(prev => prev.map(c => {
+      if (c.id !== candidateId) return c;
+      const updated = { ...c, scheduleStatus: "proposed" };
+      syncCandidate(updated);
+      return updated;
+    }));
     notify("候補日程を応募者に送信しました 📧");
   };
 
   const confirmSlot = (candidateId, slot) => {
-    setCandidates(prev => prev.map(c => c.id === candidateId ? { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key } : c));
+    setCandidates(prev => prev.map(c => {
+      if (c.id !== candidateId) return c;
+      const updated = { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key };
+      syncCandidate(updated);
+      return updated;
+    }));
     const cand = candidates.find(c => c.id === candidateId);
-    setReminders(prev => [{ id: Date.now(), text: `面接が確定しました（${slot.time} ${formatDate(slot.day)}）。準備をご確認ください。`, type: "interview_pending", candidate: cand?.name, interviewer: null }, ...prev]);
+    addReminder({ text: `面接が確定しました（${slot.time} ${formatDate(slot.day)}）。準備をご確認ください。`, type: "interview_pending", candidate: cand?.name, interviewer: null });
     notify(`面接日程が確定しました！ ${slot.time} ${formatDate(slot.day)} 🎉`);
   };
 
@@ -520,14 +610,16 @@ export default function App() {
         if (step.stage === nextStage) return { ...step, status: "active", date: todayStr(), note: "進行中" };
         return step;
       });
-      return { ...c, stage: nextStage, scheduleStatus: "awaiting_proposal", timeline: newTimeline };
+      const updated = { ...c, stage: nextStage, scheduleStatus: "awaiting_proposal", timeline: newTimeline };
+      syncCandidate(updated);
+      return updated;
     }));
     const cand = candidates.find(c => c.id === candidateId);
     const stages = cand?.timeline.map(s => s.stage) || DEFAULT_STAGES;
     const next = stages[stages.indexOf(cand?.stage) + 1];
     notify(`${cand?.name} を「${next}」へ進めました 🎉`);
     if (!comment) {
-      setReminders(prev => [{ id: Date.now(), text: `${cand?.stage}が完了しました。選考コメントの入力をお願いします。`, type: "comment_needed", candidate: cand?.name, interviewer: null }, ...prev]);
+      addReminder({ text: `${cand?.stage}が完了しました。選考コメントの入力をお願いします。`, type: "comment_needed", candidate: cand?.name, interviewer: null });
     }
   };
 
@@ -535,10 +627,15 @@ export default function App() {
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
       const activeStage = newTimeline.find(s => s.status === "active")?.stage || c.stage;
-      return { ...c, timeline: newTimeline, stage: activeStage };
+      const updated = { ...c, timeline: newTimeline, stage: activeStage };
+      syncCandidate(updated);
+      return updated;
     }));
-    // Sync modal candidate
-    setTimelineCandidate(prev => prev ? { ...prev, timeline: newTimeline, stage: newTimeline.find(s => s.status === "active")?.stage || prev.stage } : prev);
+    setTimelineCandidate(prev => prev ? {
+      ...prev,
+      timeline: newTimeline,
+      stage: newTimeline.find(s => s.status === "active")?.stage || prev.stage
+    } : prev);
     notify("選考フローを更新しました ✓");
   };
 
@@ -574,6 +671,18 @@ export default function App() {
           </button>
         );
       })}
+    </div>
+  );
+
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
+      <svg width="46" height="28" viewBox="0 0 46 28" fill="none">
+        <rect width="46" height="28" rx="9" fill="url(#lgL)"/>
+        <path d="M7 16 C11.5 16 11.5 11 17 11 C22.5 11 22.5 17 28 17 C33.5 17 33.5 12 38 12" stroke="white" strokeWidth="2.2" strokeLinecap="round" fill="none"/>
+        <circle cx="38.5" cy="12" r="2.4" fill="white"/>
+        <defs><linearGradient id="lgL" x1="0" y1="0" x2="46" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stopColor="#2563eb"/><stop offset="100%" stopColor="#6d28d9"/></linearGradient></defs>
+      </svg>
+      <div style={{ fontFamily: FONT_BODY, fontSize: 13, color: C.muted }}>読み込み中...</div>
     </div>
   );
 
@@ -1001,7 +1110,7 @@ export default function App() {
                               <span style={{ fontSize: 13 }}>💬</span> Slackで送る
                             </button>
                           )}
-                          <button onClick={() => setReminders(prev => prev.filter(x => x.id !== r.id))}
+                          <button onClick={() => deleteReminder(r.id)}
                             style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 14 }}>✕</button>
                         </div>
                       </div>
