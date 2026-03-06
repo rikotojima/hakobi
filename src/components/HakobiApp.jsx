@@ -969,6 +969,25 @@ export default function App({ session, onLogout }) {
 
   const notify = (msg) => setNotification(msg);
 
+  // Slack送信 + リマインダー追加を同時に行うヘルパー
+  const sendReminderWithSlack = async ({ text, type, candidate, interviewer, ivList = [] }) => {
+    await addReminder({ text, type, candidate, interviewer });
+    const appUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const link   = `${appUrl}/?candidate=${encodeURIComponent(candidate || "")}`;
+    const targets = ivList.length > 0 ? ivList : (interviewer ? [interviewers.find(iv => iv.name === interviewer)].filter(Boolean) : []);
+    for (const iv of targets) {
+      if (!iv?.slackHandle) continue;
+      const mention = `<@${iv.slackHandle}>`;
+      const msg = `${mention} 【${text}】
+候補者: ${candidate}
+🔗 hakobi で確認: ${link}`;
+      await fetch("/api/slack-notify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+    }
+  };
+
   // ── Google Calendar から空き枠を自動取得 ─────────────────────────────────
   const syncCalendar = async (silent = false) => {
     setCalendarLoading(true);
@@ -1076,35 +1095,44 @@ export default function App({ session, onLogout }) {
       return updated;
     }));
     setProposeModal(null);
+    const cand = candidates.find(c => c.id === candidateId);
+    const ivList = interviewers.filter(iv => selectedIvIds.includes(iv.id));
+    await sendReminderWithSlack({
+      text: `候補日程を提示しました。応募者の返答をお待ちください。`,
+      type: "proposed", candidate: cand?.name, ivList,
+    });
     notify("候補日程を応募者に送信しました 📧");
   };
 
   const confirmSlot = async (candidateId, slot) => {
+    const cand      = candidates.find(c => c.id === candidateId);
+    const ivIds     = proposedSlots[candidateId]?.ivIds || [];
+    const targetIvs = interviewers.filter(iv => ivIds.includes(iv.id));
+    const dateStr   = `${formatDate(slot.day)} ${slot.time}`;
+    const appUrl    = typeof window !== "undefined" ? window.location.origin : "";
+    const link      = `${appUrl}/?candidate=${encodeURIComponent(cand?.name || "")}`;
+
+    // ステータス更新
     setCandidates(prev => prev.map(c => {
       if (c.id !== candidateId) return c;
       const updated = { ...c, scheduleStatus: "confirmed", confirmedSlot: slot.key };
       syncCandidate(updated);
       return updated;
     }));
-    const cand    = candidates.find(c => c.id === candidateId);
-    const ivIds   = proposedSlots[candidateId]?.ivIds || [];
-    const targetIvs = interviewers.filter(iv => ivIds.includes(iv.id));
-    const dateStr = `${formatDate(slot.day)} ${slot.time}`;
-    const appUrl  = typeof window !== "undefined" ? window.location.origin : "";
-    const link    = `${appUrl}/?candidate=${encodeURIComponent(cand?.name || "")}`;
 
-    // 面接官ごとにリマインダー追加 & Slack送信
+    // 面接官ごとにリマインダー + Slack送信
     for (const iv of targetIvs) {
       const mention = iv.slackHandle ? `<@${iv.slackHandle}>` : iv.name;
       const msg = `${mention} 【面接準備依頼】候補者: ${cand?.name}　面接日程が確定しました。
 📅 日時: ${dateStr}
 🔗 hakobi で確認: ${link}`;
       await addReminder({ text: `面接日程が確定しました（${dateStr}）。準備をご確認ください。`, type: "interview_pending", candidate: cand?.name, interviewer: iv.name });
-      await fetch("/api/slack-notify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
-      });
+      if (iv.slackHandle) {
+        await fetch("/api/slack-notify", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+      }
     }
     notify(`面接日程が確定しました！ ${dateStr} 🎉 面接官${targetIvs.length}名にSlackを送信しました`);
   };
@@ -1133,7 +1161,13 @@ export default function App({ session, onLogout }) {
     const next = stages[stages.indexOf(cand?.stage) + 1];
     notify(`${cand?.name} を「${next}」へ進めました 🎉`);
     if (!comment) {
-      addReminder({ text: `${cand?.stage}が完了しました。選考コメントの入力をお願いします。`, type: "comment_needed", candidate: cand?.name, interviewer: null });
+      // 面接完了した面接官を特定してSlack送信
+      const activeIv = interviewers.find(iv => iv.name === cand?.interviewer);
+      sendReminderWithSlack({
+        text: `${cand?.stage}が完了しました。選考コメントの入力をお願いします。`,
+        type: "comment_needed", candidate: cand?.name,
+        ivList: activeIv ? [activeIv] : interviewers,
+      });
     }
   };
 
