@@ -466,6 +466,305 @@ function CandidateTimeline({ candidate, interviewers, onAdvance, onUpdateTimelin
   );
 }
 
+function RemindersTab({
+  reminders, interviewers, candidates,
+  reminderTab, setReminderTab,
+  reminderInterviewer, setReminderInterviewer,
+  showAddForm, setShowAddForm,
+  newReminderText, setNewReminderText,
+  newReminderType, setNewReminderType,
+  newReminderIv, setNewReminderIv,
+  newReminderCand, setNewReminderCand,
+  addReminder, deleteReminder, notify,
+}) {
+
+          const REMINDER_TABS = [
+            { id: "all",               label: "すべて",           icon: "🔔" },
+            { id: "proposed",          label: "候補日程提示中",   icon: "📤" },
+            { id: "interviewer_check", label: "面接官確認中",     icon: "👀" },
+            { id: "interview_pending", label: "面接実施待ち",     icon: "📅" },
+            { id: "comment_needed",    label: "コメント入力待ち", icon: "💬" },
+          ];
+          const REMINDER_COLORS = {
+            proposed:          { border: C.yellow,   bg: "#fffbeb", icon: "📤" },
+            interviewer_check: { border: "#db2777",  bg: "#fdf2f8", icon: "👀" },
+            interview_pending: { border: "#2563eb",  bg: "#eff6ff", icon: "📅" },
+            comment_needed:    { border: "#0891b2",  bg: "#ecfeff", icon: "💬" },
+          };
+
+          // フィルタリング: カテゴリ × 面接官
+          const categoryFiltered = reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab);
+          const filtered = reminderInterviewer === "all"
+            ? categoryFiltered
+            : categoryFiltered.filter(r => r.interviewer === reminderInterviewer);
+
+          // Slack メッセージ生成
+          const buildSlackMessage = (r) => {
+            const iv      = interviewers.find(i => i.name === r.interviewer);
+            const mention = iv?.slackHandle ? iv.slackHandle : (r.interviewer || "");
+            const label   = REMINDER_TABS.find(t => t.id === r.type)?.label || "";
+            const appUrl  = typeof window !== "undefined" ? window.location.origin : "";
+            const link    = r.candidate
+              ? `${appUrl}/?candidate=${encodeURIComponent(r.candidate)}`
+              : appUrl;
+            return `${mention} 【${label}】${r.candidate ? `候補者: ${r.candidate}　` : ""}${r.text}
+🔗 hakobi で確認: ${link}`;
+          };
+
+          const handleSlackSend = async (r) => {
+            const msg = buildSlackMessage(r);
+            try {
+              const res = await fetch("/api/slack-notify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg }),
+              });
+              if (res.ok) {
+                notify("Slackに送信しました 💬");
+              } else {
+                const data = await res.json();
+                notify(`Slack送信失敗: ${data.error || "不明なエラー"}`);
+              }
+            } catch (err) {
+              notify("Slack送信中にエラーが発生しました");
+            }
+          };
+
+          const handleAddReminder = async () => {
+            if (!newReminderText.trim()) return;
+            await addReminder({
+              text:        newReminderText.trim(),
+              type:        newReminderType,
+              interviewer: newReminderIv || null,
+              candidate:   newReminderCand || null,
+            });
+            setNewReminderText("");
+            setShowAddForm(false);
+            notify("リマインダーを追加しました 🔔");
+          };
+
+          return (
+            <div style={{ animation: "fadeUp 0.25s ease" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+                <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 22, color: C.text }}>リマインダー</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={() => setShowAddForm(v => !v)} style={{
+                    background: showAddForm ? C.text : "#2563eb",
+                    border: "none", borderRadius: 10, padding: "8px 16px",
+                    cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
+                    color: "#fff", display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                    {showAddForm ? "✕ 閉じる" : "+ リマインダーを追加"}
+                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f8faff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "6px 12px" }}>
+                    <span style={{ fontSize: 16 }}>💬</span>
+                    <span style={{ fontSize: 12, color: C.muted, fontFamily: FONT_BODY }}>Slack連携済み</span>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* ── リマインダー追加フォーム ── */}
+              {showAddForm && (
+                <div style={{
+                  background: "#f0f4ff", border: `1px solid #2563eb33`,
+                  borderRadius: 14, padding: "18px 20px", marginBottom: 20,
+                }}>
+                  <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 14 }}>新しいリマインダー</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    {/* 種類 */}
+                    <div>
+                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>種類</div>
+                      <select value={newReminderType} onChange={e => setNewReminderType(e.target.value)} style={{
+                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
+                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
+                        background: C.surface, outline: "none",
+                      }}>
+                        <option value="proposed">候補日程提示中</option>
+                        <option value="interviewer_check">面接官確認中</option>
+                        <option value="interview_pending">面接実施待ち</option>
+                        <option value="comment_needed">コメント入力待ち</option>
+                      </select>
+                    </div>
+                    {/* 面接官 */}
+                    <div>
+                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>面接官</div>
+                      <select value={newReminderIv} onChange={e => setNewReminderIv(e.target.value)} style={{
+                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
+                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
+                        background: C.surface, outline: "none",
+                      }}>
+                        <option value="">指定なし</option>
+                        {interviewers.map(iv => <option key={iv.id} value={iv.name}>{iv.name}</option>)}
+                      </select>
+                    </div>
+                    {/* 候補者 */}
+                    <div>
+                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>候補者</div>
+                      <select value={newReminderCand} onChange={e => setNewReminderCand(e.target.value)} style={{
+                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
+                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
+                        background: C.surface, outline: "none",
+                      }}>
+                        <option value="">指定なし</option>
+                        {candidates.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {/* メッセージ */}
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>メッセージ</div>
+                    <textarea
+                      value={newReminderText}
+                      onChange={e => setNewReminderText(e.target.value)}
+                      placeholder="リマインダーの内容を入力..."
+                      rows={3}
+                      style={{
+                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 10,
+                        padding: "10px 13px", fontFamily: FONT_BODY, fontSize: 13,
+                        color: C.text, background: C.surface, resize: "vertical", outline: "none",
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                    <button onClick={() => setShowAddForm(false)} style={{
+                      background: "none", border: `1px solid ${C.border}`, borderRadius: 8,
+                      padding: "8px 16px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 13, color: C.muted,
+                    }}>キャンセル</button>
+                    <button onClick={handleAddReminder} style={{
+                      background: "#2563eb", color: "#fff", border: "none", borderRadius: 8,
+                      padding: "8px 20px", cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
+                    }}>追加する</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── カテゴリタブ ── */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+                {REMINDER_TABS.map(rt => {
+                  const count = rt.id === "all" ? reminders.length : reminders.filter(r => r.type === rt.id).length;
+                  const isActive = reminderTab === rt.id;
+                  return (
+                    <button key={rt.id} onClick={() => setReminderTab(rt.id)} style={{
+                      background: isActive ? C.text : C.surface,
+                      border: `1px solid ${isActive ? C.text : C.border}`,
+                      borderRadius: 8, padding: "7px 13px", cursor: "pointer",
+                      fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
+                      color: isActive ? "#fff" : C.muted, transition: "all 0.15s",
+                      display: "flex", alignItems: "center", gap: 5,
+                    }}>
+                      <span>{rt.icon}</span>
+                      {rt.label}
+                      {count > 0 && (
+                        <span style={{
+                          background: isActive ? "rgba(255,255,255,0.25)" : C.card,
+                          borderRadius: 99, minWidth: 18, height: 18, padding: "0 5px",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 10, fontWeight: 700, color: isActive ? "#fff" : C.muted,
+                        }}>{count}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* ── 面接官タブ ── */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 22, flexWrap: "wrap", paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+                {["all", ...interviewers.map(iv => iv.name)].map(name => {
+                  const iv = interviewers.find(i => i.name === name);
+                  const count = name === "all"
+                    ? (reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab)).length
+                    : (reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab)).filter(r => r.interviewer === name).length;
+                  const isActive = reminderInterviewer === name;
+                  return (
+                    <button key={name} onClick={() => setReminderInterviewer(name)} style={{
+                      background: isActive ? "#f0f4ff" : C.surface,
+                      border: `1px solid ${isActive ? "#2563eb" : C.border}`,
+                      borderRadius: 8, padding: "6px 12px", cursor: "pointer",
+                      fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
+                      color: isActive ? "#2563eb" : C.muted, transition: "all 0.15s",
+                      display: "flex", alignItems: "center", gap: 6,
+                    }}>
+                      {iv
+                        ? <Avatar label={iv.avatar} size={18} color="#2563eb" />
+                        : <span>👥</span>
+                      }
+                      {name === "all" ? "全員" : name}
+                      {count > 0 && (
+                        <span style={{
+                          background: isActive ? "#dbeafe" : C.card,
+                          borderRadius: 99, minWidth: 17, height: 17, padding: "0 4px",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 10, fontWeight: 700, color: isActive ? "#2563eb" : C.muted,
+                        }}>{count}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* ── リマインダーカード ── */}
+              {filtered.length === 0
+                ? (
+                  <div style={{ textAlign: "center", color: C.muted, padding: "60px 0", fontFamily: FONT, fontSize: 15 }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
+                    このカテゴリのリマインダーはありません
+                  </div>
+                )
+                : filtered.map(r => {
+                  const rs = REMINDER_COLORS[r.type] || { border: C.muted, bg: C.surface, icon: "🔔" };
+                  const iv = interviewers.find(i => i.name === r.interviewer);
+                  // proposed → 候補者名を主表示、それ以外 → 面接官名を主表示
+                  const isProposed = r.type === "proposed";
+                  const primaryLabel  = isProposed ? r.candidate : (r.interviewer || null);
+                  const primaryColor  = isProposed ? posColor(candidates.find(c => c.name === r.candidate)?.position)?.main || rs.border : "#2563eb";
+                  const secondaryLabel = isProposed ? null : r.candidate;
+
+                  return (
+                    <div key={r.id} style={{
+                      background: rs.bg, border: `1px solid ${rs.border}33`,
+                      borderLeft: `3px solid ${rs.border}`,
+                      borderRadius: 12, padding: "14px 16px", marginBottom: 10,
+                      boxShadow: C.shadow,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                        <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{rs.icon}</span>
+                        <div style={{ flex: 1 }}>
+                          {/* Primary label */}
+                          {primaryLabel && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, flexWrap: "wrap" }}>
+                              {!isProposed && iv && <Avatar label={iv.avatar} size={20} color="#2563eb" />}
+                              <span style={{ fontFamily: FONT, fontWeight: 700, fontSize: 13, color: primaryColor }}>{primaryLabel}</span>
+                              {!isProposed && iv && <span style={{ fontSize: 11, color: C.muted }}>{iv.slackHandle}</span>}
+                              {secondaryLabel && <Tag color={rs.border}>{secondaryLabel}</Tag>}
+                            </div>
+                          )}
+                          <div style={{ fontSize: 13, color: C.text, lineHeight: 1.65 }}>{r.text}</div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", flexShrink: 0 }}>
+                          {/* Slack送信ボタン（面接官が紐づくもののみ） */}
+                          {r.interviewer && (
+                            <button onClick={() => handleSlackSend(r)} className="act-btn" style={{
+                              background: "#4a154b", color: "#fff", border: "none",
+                              borderRadius: 7, padding: "5px 12px", cursor: "pointer",
+                              fontFamily: FONT_BODY, fontWeight: 600, fontSize: 11,
+                              display: "flex", alignItems: "center", gap: 5,
+                            }}>
+                              <span style={{ fontSize: 13 }}>💬</span> Slackで送る
+                            </button>
+                          )}
+                          <button onClick={() => deleteReminder(r.id)}
+                            style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 14 }}>✕</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function App({ session, onLogout }) {
   const days = getDaysFromNow(20);
@@ -484,6 +783,12 @@ export default function App({ session, onLogout }) {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarSynced, setCalendarSynced]   = useState(false);
   const [weekPage, setWeekPage]               = useState(0); // 0=1週目, 1=2週目...
+  // リマインダー追加フォーム
+  const [showAddForm, setShowAddForm]         = useState(false);
+  const [newReminderText, setNewReminderText] = useState("");
+  const [newReminderType, setNewReminderType] = useState("comment_needed");
+  const [newReminderIv, setNewReminderIv]     = useState("");
+  const [newReminderCand, setNewReminderCand] = useState("");
 
   // ── Supabase: 初回データ読み込み ──────────────────────────────────────────
   useEffect(() => {
@@ -1152,300 +1457,30 @@ export default function App({ session, onLogout }) {
         )}
 
         {/* ══ Reminders ══ */}
-        {tab === "reminders" && (() => {
-          const REMINDER_TABS = [
-            { id: "all",               label: "すべて",           icon: "🔔" },
-            { id: "proposed",          label: "候補日程提示中",   icon: "📤" },
-            { id: "interviewer_check", label: "面接官確認中",     icon: "👀" },
-            { id: "interview_pending", label: "面接実施待ち",     icon: "📅" },
-            { id: "comment_needed",    label: "コメント入力待ち", icon: "💬" },
-          ];
-          const REMINDER_COLORS = {
-            proposed:          { border: C.yellow,   bg: "#fffbeb", icon: "📤" },
-            interviewer_check: { border: "#db2777",  bg: "#fdf2f8", icon: "👀" },
-            interview_pending: { border: "#2563eb",  bg: "#eff6ff", icon: "📅" },
-            comment_needed:    { border: "#0891b2",  bg: "#ecfeff", icon: "💬" },
-          };
-
-          // フィルタリング: カテゴリ × 面接官
-          const categoryFiltered = reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab);
-          const filtered = reminderInterviewer === "all"
-            ? categoryFiltered
-            : categoryFiltered.filter(r => r.interviewer === reminderInterviewer);
-
-          // Slack メッセージ生成
-          const buildSlackMessage = (r) => {
-            const iv      = interviewers.find(i => i.name === r.interviewer);
-            const mention = iv?.slackHandle ? iv.slackHandle : (r.interviewer || "");
-            const label   = REMINDER_TABS.find(t => t.id === r.type)?.label || "";
-            const appUrl  = typeof window !== "undefined" ? window.location.origin : "";
-            const link    = r.candidate
-              ? `${appUrl}/?candidate=${encodeURIComponent(r.candidate)}`
-              : appUrl;
-            return `${mention} 【${label}】${r.candidate ? `候補者: ${r.candidate}　` : ""}${r.text}
-🔗 hakobi で確認: ${link}`;
-          };
-
-          const handleSlackSend = async (r) => {
-            const msg = buildSlackMessage(r);
-            try {
-              const res = await fetch("/api/slack-notify", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: msg }),
-              });
-              if (res.ok) {
-                notify("Slackに送信しました 💬");
-              } else {
-                const data = await res.json();
-                notify(`Slack送信失敗: ${data.error || "不明なエラー"}`);
-              }
-            } catch (err) {
-              notify("Slack送信中にエラーが発生しました");
-            }
-          };
-
-          // リマインダー追加フォームの状態
-          const [showAddForm, setShowAddForm]         = useState(false);
-          const [newReminderText, setNewReminderText] = useState("");
-          const [newReminderType, setNewReminderType] = useState("comment_needed");
-          const [newReminderIv, setNewReminderIv]     = useState(interviewers[0]?.name || "");
-          const [newReminderCand, setNewReminderCand] = useState(candidates[0]?.name || "");
-
-          const handleAddReminder = async () => {
-            if (!newReminderText.trim()) return;
-            await addReminder({
-              text:        newReminderText.trim(),
-              type:        newReminderType,
-              interviewer: newReminderIv || null,
-              candidate:   newReminderCand || null,
-            });
-            setNewReminderText("");
-            setShowAddForm(false);
-            notify("リマインダーを追加しました 🔔");
-          };
-
-          return (
-            <div style={{ animation: "fadeUp 0.25s ease" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
-                <div style={{ fontFamily: FONT, fontWeight: 800, fontSize: 22, color: C.text }}>リマインダー</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button onClick={() => setShowAddForm(v => !v)} style={{
-                    background: showAddForm ? C.text : "#2563eb",
-                    border: "none", borderRadius: 10, padding: "8px 16px",
-                    cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 600, fontSize: 13,
-                    color: "#fff", display: "flex", alignItems: "center", gap: 6,
-                  }}>
-                    {showAddForm ? "✕ 閉じる" : "+ リマインダーを追加"}
-                  </button>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#f8faff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "6px 12px" }}>
-                    <span style={{ fontSize: 16 }}>💬</span>
-                    <span style={{ fontSize: 12, color: C.muted, fontFamily: FONT_BODY }}>Slack連携済み</span>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── リマインダー追加フォーム ── */}
-              {showAddForm && (
-                <div style={{
-                  background: "#f0f4ff", border: `1px solid #2563eb33`,
-                  borderRadius: 14, padding: "18px 20px", marginBottom: 20,
-                }}>
-                  <div style={{ fontFamily: FONT, fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 14 }}>新しいリマインダー</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-                    {/* 種類 */}
-                    <div>
-                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>種類</div>
-                      <select value={newReminderType} onChange={e => setNewReminderType(e.target.value)} style={{
-                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
-                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
-                        background: C.surface, outline: "none",
-                      }}>
-                        <option value="proposed">候補日程提示中</option>
-                        <option value="interviewer_check">面接官確認中</option>
-                        <option value="interview_pending">面接実施待ち</option>
-                        <option value="comment_needed">コメント入力待ち</option>
-                      </select>
-                    </div>
-                    {/* 面接官 */}
-                    <div>
-                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>面接官</div>
-                      <select value={newReminderIv} onChange={e => setNewReminderIv(e.target.value)} style={{
-                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
-                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
-                        background: C.surface, outline: "none",
-                      }}>
-                        <option value="">指定なし</option>
-                        {interviewers.map(iv => <option key={iv.id} value={iv.name}>{iv.name}</option>)}
-                      </select>
-                    </div>
-                    {/* 候補者 */}
-                    <div>
-                      <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>候補者</div>
-                      <select value={newReminderCand} onChange={e => setNewReminderCand(e.target.value)} style={{
-                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 8,
-                        padding: "8px 10px", fontFamily: FONT_BODY, fontSize: 13, color: C.text,
-                        background: C.surface, outline: "none",
-                      }}>
-                        <option value="">指定なし</option>
-                        {candidates.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  {/* メッセージ */}
-                  <div style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.muted, fontFamily: FONT, fontWeight: 700, marginBottom: 5 }}>メッセージ</div>
-                    <textarea
-                      value={newReminderText}
-                      onChange={e => setNewReminderText(e.target.value)}
-                      placeholder="リマインダーの内容を入力..."
-                      rows={3}
-                      style={{
-                        width: "100%", border: `1px solid ${C.border}`, borderRadius: 10,
-                        padding: "10px 13px", fontFamily: FONT_BODY, fontSize: 13,
-                        color: C.text, background: C.surface, resize: "vertical", outline: "none",
-                      }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                    <button onClick={() => setShowAddForm(false)} style={{
-                      background: "none", border: `1px solid ${C.border}`, borderRadius: 8,
-                      padding: "8px 16px", cursor: "pointer", fontFamily: FONT_BODY, fontSize: 13, color: C.muted,
-                    }}>キャンセル</button>
-                    <button onClick={handleAddReminder} style={{
-                      background: "#2563eb", color: "#fff", border: "none", borderRadius: 8,
-                      padding: "8px 20px", cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 700, fontSize: 13,
-                    }}>追加する</button>
-                  </div>
-                </div>
-              )}
-
-              {/* ── カテゴリタブ ── */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
-                {REMINDER_TABS.map(rt => {
-                  const count = rt.id === "all" ? reminders.length : reminders.filter(r => r.type === rt.id).length;
-                  const isActive = reminderTab === rt.id;
-                  return (
-                    <button key={rt.id} onClick={() => setReminderTab(rt.id)} style={{
-                      background: isActive ? C.text : C.surface,
-                      border: `1px solid ${isActive ? C.text : C.border}`,
-                      borderRadius: 8, padding: "7px 13px", cursor: "pointer",
-                      fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
-                      color: isActive ? "#fff" : C.muted, transition: "all 0.15s",
-                      display: "flex", alignItems: "center", gap: 5,
-                    }}>
-                      <span>{rt.icon}</span>
-                      {rt.label}
-                      {count > 0 && (
-                        <span style={{
-                          background: isActive ? "rgba(255,255,255,0.25)" : C.card,
-                          borderRadius: 99, minWidth: 18, height: 18, padding: "0 5px",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 10, fontWeight: 700, color: isActive ? "#fff" : C.muted,
-                        }}>{count}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* ── 面接官タブ ── */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 22, flexWrap: "wrap", paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
-                {["all", ...interviewers.map(iv => iv.name)].map(name => {
-                  const iv = interviewers.find(i => i.name === name);
-                  const count = name === "all"
-                    ? (reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab)).length
-                    : (reminderTab === "all" ? reminders : reminders.filter(r => r.type === reminderTab)).filter(r => r.interviewer === name).length;
-                  const isActive = reminderInterviewer === name;
-                  return (
-                    <button key={name} onClick={() => setReminderInterviewer(name)} style={{
-                      background: isActive ? "#f0f4ff" : C.surface,
-                      border: `1px solid ${isActive ? "#2563eb" : C.border}`,
-                      borderRadius: 8, padding: "6px 12px", cursor: "pointer",
-                      fontFamily: FONT_BODY, fontWeight: 600, fontSize: 12,
-                      color: isActive ? "#2563eb" : C.muted, transition: "all 0.15s",
-                      display: "flex", alignItems: "center", gap: 6,
-                    }}>
-                      {iv
-                        ? <Avatar label={iv.avatar} size={18} color="#2563eb" />
-                        : <span>👥</span>
-                      }
-                      {name === "all" ? "全員" : name}
-                      {count > 0 && (
-                        <span style={{
-                          background: isActive ? "#dbeafe" : C.card,
-                          borderRadius: 99, minWidth: 17, height: 17, padding: "0 4px",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 10, fontWeight: 700, color: isActive ? "#2563eb" : C.muted,
-                        }}>{count}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* ── リマインダーカード ── */}
-              {filtered.length === 0
-                ? (
-                  <div style={{ textAlign: "center", color: C.muted, padding: "60px 0", fontFamily: FONT, fontSize: 15 }}>
-                    <div style={{ fontSize: 32, marginBottom: 12 }}>✓</div>
-                    このカテゴリのリマインダーはありません
-                  </div>
-                )
-                : filtered.map(r => {
-                  const rs = REMINDER_COLORS[r.type] || { border: C.muted, bg: C.surface, icon: "🔔" };
-                  const iv = interviewers.find(i => i.name === r.interviewer);
-                  // proposed → 候補者名を主表示、それ以外 → 面接官名を主表示
-                  const isProposed = r.type === "proposed";
-                  const primaryLabel  = isProposed ? r.candidate : (r.interviewer || null);
-                  const primaryColor  = isProposed ? posColor(candidates.find(c => c.name === r.candidate)?.position)?.main || rs.border : "#2563eb";
-                  const secondaryLabel = isProposed ? null : r.candidate;
-
-                  return (
-                    <div key={r.id} style={{
-                      background: rs.bg, border: `1px solid ${rs.border}33`,
-                      borderLeft: `3px solid ${rs.border}`,
-                      borderRadius: 12, padding: "14px 16px", marginBottom: 10,
-                      boxShadow: C.shadow,
-                    }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                        <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{rs.icon}</span>
-                        <div style={{ flex: 1 }}>
-                          {/* Primary label */}
-                          {primaryLabel && (
-                            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, flexWrap: "wrap" }}>
-                              {!isProposed && iv && <Avatar label={iv.avatar} size={20} color="#2563eb" />}
-                              <span style={{ fontFamily: FONT, fontWeight: 700, fontSize: 13, color: primaryColor }}>{primaryLabel}</span>
-                              {!isProposed && iv && <span style={{ fontSize: 11, color: C.muted }}>{iv.slackHandle}</span>}
-                              {secondaryLabel && <Tag color={rs.border}>{secondaryLabel}</Tag>}
-                            </div>
-                          )}
-                          <div style={{ fontSize: 13, color: C.text, lineHeight: 1.65 }}>{r.text}</div>
-                        </div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", flexShrink: 0 }}>
-                          {/* Slack送信ボタン（面接官が紐づくもののみ） */}
-                          {r.interviewer && (
-                            <button onClick={() => handleSlackSend(r)} className="act-btn" style={{
-                              background: "#4a154b", color: "#fff", border: "none",
-                              borderRadius: 7, padding: "5px 12px", cursor: "pointer",
-                              fontFamily: FONT_BODY, fontWeight: 600, fontSize: 11,
-                              display: "flex", alignItems: "center", gap: 5,
-                            }}>
-                              <span style={{ fontSize: 13 }}>💬</span> Slackで送る
-                            </button>
-                          )}
-                          <button onClick={() => deleteReminder(r.id)}
-                            style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 14 }}>✕</button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              }
-            </div>
-          );
-        })()}
+        {tab === "reminders" && (
+          <RemindersTab
+            reminders={reminders}
+            interviewers={interviewers}
+            candidates={candidates}
+            reminderTab={reminderTab}
+            setReminderTab={setReminderTab}
+            reminderInterviewer={reminderInterviewer}
+            setReminderInterviewer={setReminderInterviewer}
+            showAddForm={showAddForm}
+            setShowAddForm={setShowAddForm}
+            newReminderText={newReminderText}
+            setNewReminderText={setNewReminderText}
+            newReminderType={newReminderType}
+            setNewReminderType={setNewReminderType}
+            newReminderIv={newReminderIv}
+            setNewReminderIv={setNewReminderIv}
+            newReminderCand={newReminderCand}
+            setNewReminderCand={setNewReminderCand}
+            addReminder={addReminder}
+            deleteReminder={deleteReminder}
+            notify={notify}
+          />
+        )}
       </div>
 
       {/* Timeline modal */}
